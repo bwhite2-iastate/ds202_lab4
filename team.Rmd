@@ -1,0 +1,208 @@
+---
+title: "Lab 4"
+author: "Brett White"
+output: html_document
+---
+
+```{r load}
+library(readxl)
+defense <- read_excel('cyclonesFootball2019.xlsx', sheet='Defensive')
+offense <- read_excel('cyclonesFootball2019.xlsx', sheet='Offensive')
+biography <- read_excel('cyclonesFootball2019.xlsx', sheet='Biography')
+library(tidyverse)
+```
+
+## Part one: Cleaning data
+```{r clean, dependson = "load"}
+defClean <- defense %>%
+  mutate(
+    Name = factor(Name),
+    Opponent_Opponent = factor(Opponent_Opponent),
+    across(c(-Name, -Opponent_Opponent), as.numeric)
+  )
+offClean <- offense %>%
+  separate(`Passing_CMP-ATT`, c('CMP', 'ATT')) %>%
+  mutate(
+    Name = factor(Name),
+    Opponent_Opponent = factor(Opponent_Opponent),
+    across(c(-Name, -Opponent_Opponent), as.numeric),
+    `Passing_CMP-ATT` = as.numeric(CMP) / as.numeric(ATT)
+  ) %>%
+  mutate(
+    Receiving_REC = ifelse(is.na(Receiving_REC), 0, Receiving_REC),
+    Receiving_YDS = ifelse(is.na(Receiving_YDS), 0, Receiving_YDS),
+    Receiving_TD = ifelse(is.na(Receiving_TD), 0, Receiving_TD),
+    Rushing_ATT = ifelse(is.na(Rushing_ATT), 0, Rushing_ATT),
+    Rushing_YDS = ifelse(is.na(Rushing_YDS), 0, Rushing_YDS),
+    Rushing_TD = ifelse(is.na(Rushing_TD), 0, Rushing_TD),
+    Passing_YDS = ifelse(is.na(Passing_YDS), 0, Passing_YDS),
+    Passing_TD = ifelse(is.na(Passing_TD), 0, Passing_TD),
+    Passing_INT = ifelse(is.na(Passing_INT), 0, Passing_INT),
+    `Passing_CMP-ATT` = ifelse(is.na(`Passing_CMP-ATT`), 0, `Passing_CMP-ATT`)
+  ) %>%
+  select(-CMP, -ATT)
+bioClean <- biography %>%
+  separate(Height, c('Feet', 'Inches'), sep='-') %>%
+  mutate(
+    Name = factor(Name),
+    Weight = as.numeric(Weight),
+    Height = 12 * as.numeric(Feet) + as.numeric(Inches)
+  ) %>%
+  select(-Feet, -Inches)
+str(defClean)
+str(offClean)
+str(bioClean)
+```
+
+## Part two: Tidying
+1.
+    ```{r stat, dependson = c("load", "clean")}
+    defClean <- defClean %>%
+      pivot_longer(c(-Name, -Opponent_Opponent), names_to='stat')
+    defClean
+    ```
+
+2.
+    ```{r, dependson = c("load", "clean", "stat")}
+    defClean %>%
+      ggplot(aes(x=value)) + geom_boxplot() + facet_wrap(~stat) + theme(axis.text.y = element_blank(), axis.ticks.y = element_blank()) + ggtitle('Distributions of Defensive Statistics') + xlab('Value of Defensive Statistics')
+    ```
+
+    Forcing fumbles, recovering fumbles, and catching interceptions appear to be the most rare defensive skills as the majority of players have not shown such skills. The summary statistics for the distributions of these skills are all 0 with one high outlier.
+
+3.
+    ```{r, dependson = c("load", "clean", "stat")}
+    defClean %>%
+      filter(stat == 'Tackles_Solo' & Opponent_Opponent %in% c("Iowa", "Notre Dame")) %>%
+      pivot_wider(names_from=Opponent_Opponent, values_from=value) %>%
+      mutate(Iowa = ifelse(is.na(Iowa), 0, Iowa), `Notre Dame` = ifelse(is.na(`Notre Dame`), 0, `Notre Dame`)) %>%
+      ggplot(aes(x=Iowa, y=`Notre Dame`)) + geom_point() + ggtitle('Solo Tackles for Iowa and Notre Dame Games') + xlab('Solo Tackles in Iowa Game') + ylab('Solo Tackles in Notre Dame Game')
+    ```
+
+    Based on the scatterplot, ISU had better defense against Notre Dame because there were more solo tackles in the Notre Dame game than the Iowa game. The scatterplot has higher values along the Notre Dame game axis than the values along the Iowa game axis.
+
+4.
+    ```{r hometown, dependson = c("load", "clean")}
+    bioClean <- bioClean %>%
+      separate(Hometown, c('City', 'State'), sep=', ')
+    bioClean %>%
+      select(City, State) %>%
+      head
+    ```
+
+5.
+    ```{r, dependson = c("load", "clean", "hometown")}
+    bioClean %>%
+      group_by(State) %>%
+      summarize(count = n()) %>%
+      distinct(State, count) %>%
+      arrange(desc(count), State)
+    ```
+
+## Part three: Joining data frames
+1.
+    ```{r, dependson = c("load", "clean", "hometown")}
+    bioClean %>%
+      semi_join(offClean, by='Name') %>%
+      group_by(State) %>%
+      summarize(count = n()) %>%
+      distinct(State, count) %>%
+      arrange(desc(count), State)
+    bioClean %>%
+      semi_join(defClean, by='Name') %>%
+      group_by(State) %>%
+      summarize(count = n()) %>%
+      distinct(State, count) %>%
+      arrange(desc(count), State)
+    ```
+
+    The first table shows the states from which offensive players come. The second table shows the states from which defensive players come.
+
+2.
+    ```{r, dependson = c("load", "clean", "stat")}
+    all <- defClean %>%
+      pivot_wider(names_from='stat', values_from='value') %>%
+      full_join(offClean, by=c('Name', 'Opponent_Opponent')) %>%
+      pivot_longer(c(-Name, -Opponent_Opponent), names_to='stat') %>%
+      mutate(value = ifelse(is.na(value), 0, value))
+    all %>%
+      filter(Name != 'Purdy, Brock') %>%
+      group_by(stat) %>%
+      summarize(team = mean(value)) %>%
+      inner_join(all %>%
+                   filter(Name == 'Purdy, Brock') %>%
+                   group_by(stat) %>%
+                   summarize(Brock = mean(value)), by='stat') %>%
+      filter(Brock >= team) %>%
+      select(stat)
+    ```
+
+    According to the list above, Brock Purdy had better statistics than the average of the rest of the team in pass completion, passing touchdowns, passing yards, rushing attempts, rushing touchdowns, and rushing yards. This makes sense because, as quaterback, Brock Purdy had to throw the ball down the field to receivers as well as run the ball when no receivers were open. Unfortunately, this also means Brock throws more interceptions than anyone else on the team.
+
+    This list was determined by creating a dataframe of combined offensive and defensive statistics by performing a full join with the offensive and defensive statistics dataframes replacing NA values with 0 and then comparing Brock Purdy's averages for each statistic for the season against the rest of the team's (minus Brock) averages for each statistic for the season and then filtering and listing the statistics where Brock's average exceeded the team's average.
+
+3.
+    ```{r, dependson = c("load", "clean", "stat")}
+    defClean2018 <- read_excel('cyclonesFootball2018.xlsx', sheet='Defensive') %>%
+      mutate(
+        Name = factor(Name),
+        Opponent_Opponent = factor(Opponent_Opponent),
+        across(c(-Name, -Opponent_Opponent), as.numeric)
+      )
+    offClean2018 <- read_excel('cyclonesFootball2018.xlsx', sheet='Offensive') %>%
+      separate(`Passing_CMP-ATT`, c('CMP', 'ATT')) %>%
+      mutate(
+        Name = factor(Name),
+        Opponent_Opponent = factor(Opponent_Opponent),
+        across(c(-Name, -Opponent_Opponent), as.numeric),
+        `Passing_CMP-ATT` = as.numeric(CMP) / as.numeric(ATT)
+      ) %>%
+      mutate(
+        Receiving_REC = ifelse(is.na(Receiving_REC), 0, Receiving_REC),
+        Receiving_YDS = ifelse(is.na(Receiving_YDS), 0, Receiving_YDS),
+        Receiving_TD = ifelse(is.na(Receiving_TD), 0, Receiving_TD),
+        Rushing_ATT = ifelse(is.na(Rushing_ATT), 0, Rushing_ATT),
+        Rushing_YDS = ifelse(is.na(Rushing_YDS), 0, Rushing_YDS),
+        Rushing_TD = ifelse(is.na(Rushing_TD), 0, Rushing_TD),
+        Passing_YDS = ifelse(is.na(Passing_YDS), 0, Passing_YDS),
+        Passing_TD = ifelse(is.na(Passing_TD), 0, Passing_TD),
+        Passing_INT = ifelse(is.na(Passing_INT), 0, Passing_INT),
+        `Passing_CMP-ATT` = ifelse(is.na(`Passing_CMP-ATT`), 0, `Passing_CMP-ATT`)
+      ) %>%
+      select(-CMP, -ATT)
+    defImprove <- defClean2018 %>%
+      pivot_longer(c(-Name, -Opponent_Opponent), names_to='stat', values_to='2018') %>%
+      group_by(Name, stat) %>%
+      summarize(total2018 = sum(`2018`)) %>%
+      inner_join(defClean %>%
+                   group_by(Name, stat) %>%
+                   summarize(total2019 = sum(value)), by=c('Name', 'stat')) %>%
+      mutate(diff = total2019 - total2018) %>%
+      arrange(desc(diff))
+    offImprove <- offClean2018 %>%
+      pivot_longer(c(-Name, -Opponent_Opponent), names_to='stat', values_to='2018') %>%
+      group_by(Name, stat) %>%
+      summarize(total2018 = sum(`2018`)) %>%
+      inner_join(offClean %>%
+                   pivot_longer(c(-Name, -Opponent_Opponent), names_to='stat') %>%
+                   group_by(Name, stat) %>%
+                   summarize(total2019 = sum(value)), by=c('Name', 'stat')) %>%
+      mutate(diff = total2019 - total2018) %>%
+      arrange(desc(diff))
+    defImprove %>%
+      group_by(stat) %>%
+      summarize(max = max(diff)) %>%
+      inner_join(defImprove, by=c('stat', max = 'diff')) %>%
+      select(Name, stat, max) %>%
+      arrange(stat, Name)
+    offImprove %>%
+      group_by(stat) %>%
+      summarize(max = max(diff)) %>%
+      inner_join(offImprove, by=c('stat', max = 'diff')) %>%
+      select(Name, stat, max) %>%
+      arrange(stat, Name)
+    ```
+
+    Brock Purdy improved the most in passing yards, pass completion percentage, passing touchdowns, and rushing touchdowns but threw more interceptions. Charlie Kolar improved the most in receiving yards, receiving touchdowns, and receptions. Johnnie Lang improved the most in rushing yards and rushing attempts. Anthony Johnson improved the most in solo tackles and tackles for loss and tied with Zach Petersen for most forced fumbles and with Greg Eisworth for most passes blocked. O'Rien Vance improved the most in pressuring the quarterback and assisted tackles and tied with Will McDonald for sacks. Eyioma Uwazurike improved the most in fumbles recovered and Lawrence White improved the most in interceptions caught.
+
+    This analysis was determined by creating dataframes that contained the total offensive and defensive statistics for the 2018 and 2019 seasons and adding a column to both dataframes for the difference between the 2018 and 2019 total and then grouping by statistic and finding the max difference and then joining back with the original dataframes using the stat and max columns (where max matches with diff).
